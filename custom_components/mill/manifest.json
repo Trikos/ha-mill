@@ -1,0 +1,23 @@
+{
+  "domain": "mill",
+  "name": "Mill",
+  "after_dependencies": [
+    "recorder"
+  ],
+  "codeowners": [
+    "@Trikos"
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/Trikos/ha-mill",
+  "iot_class": "local_polling",
+  "loggers": [
+    "mill",
+    "mill_local"
+  ],
+  "requirements": [
+    "millheater==0.14.1",
+    "mill-local==0.5.0"
+  ],
+  "issue_tracker": "https://github.com/Trikos/ha-mill/issues",
+  "version": "2026.7.3-1"
+}
