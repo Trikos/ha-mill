@@ -1,5 +1,6 @@
 """Support for mill wifi-enabled home heaters."""
 
+from datetime import datetime, timedelta
 from typing import Any, override
 
 from mill import Heater, MillDevice
@@ -8,12 +9,19 @@ from homeassistant.components.number import NumberDeviceClass, NumberEntity
 from homeassistant.const import UnitOfPower
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.util import dt as dt_util
 
 from .const import CLOUD, CONNECTION_TYPE
 from .coordinator import MillConfigEntry, MillDataUpdateCoordinator
 from .entity import MillBaseEntity
 
 MODE_INDIVIDUAL = "control_individually"
+
+# The cloud reports a new setting only after the heater has picked it up, which
+# can take a few minutes. Until then, show what was last written.
+PENDING_TIMEOUT = timedelta(minutes=10)
+
+_pending: dict[tuple[str, str], tuple[float, datetime]] = {}
 
 
 async def async_setup_entry(
@@ -44,6 +52,24 @@ def _reported_settings(device: MillDevice) -> dict[str, Any]:
     return (device.data or {}).get("deviceSettings", {}).get("reported", {})
 
 
+def _setting(device: MillDevice, key: str) -> Any:
+    """Return a setting, preferring a recent write the heater has not reported yet."""
+    reported = _reported_settings(device).get(key)
+    pending = _pending.get((device.device_id, key))
+    if pending is None:
+        return reported
+    value, written_at = pending
+    if reported == value or dt_util.utcnow() - written_at > PENDING_TIMEOUT:
+        del _pending[(device.device_id, key)]
+        return reported
+    return value
+
+
+def _set_pending(device_id: str, key: str, value: float) -> None:
+    """Remember a setting written to the cloud until the heater reports it."""
+    _pending[(device_id, key)] = (value, dt_util.utcnow())
+
+
 class MillNumber(MillBaseEntity, NumberEntity):
     """Rated power of the heater.
 
@@ -71,13 +97,16 @@ class MillNumber(MillBaseEntity, NumberEntity):
     @callback
     @override
     def _update_attr(self, device: MillDevice) -> None:
-        self._attr_native_value = _reported_settings(device).get("max_heater_power")
+        self._attr_native_value = _setting(device, "max_heater_power")
         self._available = device.available and self._attr_native_value is not None
 
     @override
     async def async_set_native_value(self, value: float) -> None:
         """Set new value."""
         await self.coordinator.mill_data_connection.max_heating_power(self._id, value)
+        _set_pending(self._id, "max_heater_power", value)
+        self._attr_native_value = value
+        self.async_write_ha_state()
 
 
 class MillPowerLimitNumber(MillBaseEntity, NumberEntity):
@@ -107,9 +136,8 @@ class MillPowerLimitNumber(MillBaseEntity, NumberEntity):
     @callback
     @override
     def _update_attr(self, device: MillDevice) -> None:
-        reported = _reported_settings(device)
-        self._rated_power = reported.get("max_heater_power")
-        percent = reported.get("limited_heating_power")
+        self._rated_power = _setting(device, "max_heater_power")
+        percent = _setting(device, "limited_heating_power")
         if self._rated_power and percent is not None:
             self._attr_native_max_value = self._rated_power
             self._attr_native_value = round(self._rated_power * percent / 100)
@@ -138,6 +166,7 @@ class MillPowerLimitNumber(MillBaseEntity, NumberEntity):
             # The library caches device reads for up to 20 minutes; drop the cache
             # so the next refresh shows the new limit instead of the old one.
             getattr(connection, "_cached_data", {}).clear()
+            _set_pending(self._id, "limited_heating_power", percent)
             self._attr_native_value = round(self._rated_power * percent / 100)
             self.async_write_ha_state()
             await self.coordinator.async_request_refresh()

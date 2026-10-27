@@ -43,10 +43,13 @@ becomes unavailable and can be deleted.
 Once `limited_heating_power` support lands in pymill and in Home Assistant core, this repository is no
 longer needed.
 
-## Developed against
+## Tested on
 
-- Home Assistant 2026.7.3, Mill cloud connection, Mill heater with PID controller, power measured with a
-  Shelly plug.
+- Home Assistant 2026.7.3, Mill cloud connection, 1500 W Mill heater with PID controller, power measured
+  with a Shelly plug in front of it: a 300 W limit set from Home Assistant brought the draw from ~1000 W
+  to 140–350 W (about 290 W on average) within a minute.
+- The cloud reports a new limit only once the heater has picked it up. The entity shows the value you
+  wrote for up to 10 minutes while that happens.
 
 ## License
 
